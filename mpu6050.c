@@ -132,8 +132,35 @@ error:
 	return err;
 }
 
+static ssize_t direction_y_show(struct class *class, struct class_attribute *attr, char *buf)
+{
+        mpu6050_read_data();
+
+        if (mpu6050_data.accel_value[1] <= -2000) {
+                sprintf(buf, "1\n"); // right
+        } else if (mpu6050_data.accel_value[1] >= 1500) {
+                sprintf(buf, "0\n"); // left
+        } else { 
+                sprintf(buf, "-1\n"); // static
+        }
+
+        return strlen(buf);
+}
+
+CLASS_ATTR_RO(direction_y);
+
+static struct class *attr_class;
+
 static void __exit mpu6050_exit(void)
 {
+        if (attr_class) { 
+		class_remove_file(attr_class, &class_attr_direction_y);
+		pr_info("mpu6050: sysfs class attributes removed\n");
+
+		class_destroy(attr_class);
+		pr_info("mpu6050: sysfs class destroyed\n");
+	}
+
         i2c_del_driver(&mpu6050_i2c_driver);
         pr_info("mpu6050: i2c driver deleted\n");
 
@@ -150,6 +177,21 @@ static int __init mpu6050_init(void)
                 goto out;
         }
         pr_info("mpu6050: i2c driver created %d\n", ret);
+
+        attr_class = class_create(THIS_MODULE, "mpu6050");
+	if (IS_ERR(attr_class)) {
+		ret = PTR_ERR(attr_class);
+		pr_err("mpu6050: failed to create sysfs class: %d\n", ret);
+		goto out;
+	}
+	pr_info("mpu6050: sysfs class created\n");
+
+	ret = class_create_file(attr_class, &class_attr_direction_y);
+	if (ret) {
+		pr_err("mpu6050: failed to created sysfs class attribute direction: %d\n", ret);
+		goto out;
+	}
+	pr_info("mpu6050: sysfs class attributes created\n");
 
         ret = mpu6050_read_data();
         if (ret == -ENODEV) {
