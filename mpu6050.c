@@ -42,7 +42,7 @@ MODULE_VERSION("0.1");
 
 struct mpu6050_data {
         struct i2c_client *client;
-        int accel_value[3];
+        int accel_value[2];
 };
 
 static struct mpu6050_data mpu6050_data;
@@ -111,6 +111,27 @@ static struct i2c_driver mpu6050_i2c_driver = {
         .id_table = mpu6050_idtable,
 };
 
+static int mpu6050_read_data(void)
+{
+        int err;
+
+        if (mpu6050_data.client == 0) {
+                err = -ENODEV;
+                goto error;
+        }
+
+        mpu6050_data.accel_value[0] = (s16)((u16)i2c_smbus_read_word_swapped(mpu6050_data.client, REG_ACCEL_XOUT_H));
+	mpu6050_data.accel_value[1] = (s16)((u16)i2c_smbus_read_word_swapped(mpu6050_data.client, REG_ACCEL_YOUT_H));
+	
+	pr_info("mpu6050: accel output cord - [%d, %d]", mpu6050_data.accel_value[0],
+                mpu6050_data.accel_value[1]);
+
+	return 0;
+
+error:
+	return err;
+}
+
 static void __exit mpu6050_exit(void)
 {
         i2c_del_driver(&mpu6050_i2c_driver);
@@ -129,6 +150,11 @@ static int __init mpu6050_init(void)
                 goto out;
         }
         pr_info("mpu6050: i2c driver created %d\n", ret);
+
+        ret = mpu6050_read_data();
+        if (ret == -ENODEV) {
+                goto out;
+        }
 
         pr_info("mpu6050: module loaded\n");
 
