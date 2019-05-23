@@ -4,6 +4,9 @@
 #include <linux/i2c.h>
 #include <linux/i2c-dev.h>
 #include <linux/device.h>
+#include <linux/kthread.h>
+#include <linux/mutex.h>
+#include <linux/delay.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Maxim Primerov <primerovmax@gmail.com");
@@ -44,6 +47,10 @@ struct mpu6050_data {
         struct i2c_client *client;
         int accel_value[2];
 };
+
+static struct task_struct *master_thread;
+
+static struct mutex data_lock;
 
 static struct mpu6050_data mpu6050_data;
 
@@ -123,8 +130,8 @@ static int mpu6050_read_data(void)
         mpu6050_data.accel_value[0] = (s16)((u16)i2c_smbus_read_word_swapped(mpu6050_data.client, REG_ACCEL_XOUT_H));
 	mpu6050_data.accel_value[1] = (s16)((u16)i2c_smbus_read_word_swapped(mpu6050_data.client, REG_ACCEL_YOUT_H));
 	
-	pr_info("mpu6050: accel output cord - [%d, %d]", mpu6050_data.accel_value[0],
-                mpu6050_data.accel_value[1]);
+	//pr_info("mpu6050: accel output cord - [%d, %d]", mpu6050_data.accel_value[0],
+	//           mpu6050_data.accel_value[1]);
 
 	return 0;
 
@@ -132,10 +139,25 @@ error:
 	return err;
 }
 
+static int master_fun(void *args)
+{
+	while(!kthread_should_stop()){
+
+		if(!mutex_trylock(&data_lock)){
+		mpu6050_read_data();
+		mutex_unlock(&data_lock);
+		}
+		
+		mdelay(10);
+	}
+	
+	return 0;
+}
+
 static ssize_t direction_y_show(struct class *class, struct class_attribute *attr, char *buf)
 {
-        mpu6050_read_data();
-
+		mutex_lock(&data_lock);
+	
         if (mpu6050_data.accel_value[1] <= -2000) {
                 sprintf(buf, "1\n"); // right
         } else if (mpu6050_data.accel_value[1] >= 1500) {
@@ -143,7 +165,9 @@ static ssize_t direction_y_show(struct class *class, struct class_attribute *att
         } else { 
                 sprintf(buf, "-1\n"); // static
         }
-
+		
+		mutex_unlock(&data_lock);
+		
         return strlen(buf);
 }
 
@@ -153,6 +177,8 @@ static struct class *attr_class;
 
 static void __exit mpu6050_exit(void)
 {
+		kthread_stop(master_thread);
+		
         if (attr_class) { 
 		class_remove_file(attr_class, &class_attr_direction_y);
 		pr_info("mpu6050: sysfs class attributes removed\n");
@@ -177,6 +203,8 @@ static int __init mpu6050_init(void)
                 goto out;
         }
         pr_info("mpu6050: i2c driver created %d\n", ret);
+		
+		master_thread = kthread_run(master_fun, NULL, "master_thread");
 
         attr_class = class_create(THIS_MODULE, "mpu6050");
 	if (IS_ERR(attr_class)) {
